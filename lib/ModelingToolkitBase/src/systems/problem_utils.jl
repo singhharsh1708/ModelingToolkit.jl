@@ -1508,13 +1508,28 @@ $PROBLEM_INTERNAL_KWARGS
 
 All other keyword arguments are passed as-is to `constructor`.
 """
-function process_SciMLProblem(
-        constructor, sys::AbstractSystem, op;
+Base.@nospecializeinfer function process_SciMLProblem(
+        ::Type{constructor}, sys::AbstractSystem, @nospecialize(op);
+        u0_eltype = nothing, u0_constructor = identity, p_constructor = identity,
+        symbolic_u0 = false, kwargs...
+    ) where {constructor}
+    u0Type = pType = typeof(op)
+    op = operating_point_preprocess(sys, op)
+    floatT = calculate_float_type(op, u0Type)
+    floatT = something(u0_eltype, floatT)
+    u0_constructor = get_u0_constructor(u0_constructor, u0Type, floatT, symbolic_u0)
+    p_constructor = get_p_constructor(p_constructor, pType, floatT)
+
+    __process_SciMLProblem(constructor, sys, op, floatT, u0Type; u0_constructor, p_constructor, symbolic_u0, kwargs...)
+end
+
+function __process_SciMLProblem(
+        ::Type{constructor}, sys::AbstractSystem, op::AnyDict, ::Type{floatT}, ::Type{u0Type};
         build_initializeprob = supports_initialization(sys),
         implicit_dae = false, t = nothing, guesses = AnyDict(),
         warn_initialize_determined = true, initialization_eqs = [],
         eval_expression = false, eval_module = @__MODULE__, fully_determined = nothing,
-        check_initialization_units = false, u0_eltype = nothing, tofloat = true,
+        check_initialization_units = false, tofloat = true,
         u0_constructor = identity, p_constructor = identity,
         check_length = true, symbolic_u0 = false, warn_cyclic_dependency = false,
         circular_dependency_max_cycle_length = length(all_symbols(sys)),
@@ -1523,7 +1538,7 @@ function process_SciMLProblem(
         algebraic_only = false, missing_guess_value = default_missing_guess_value(),
         allow_incomplete = false, is_initializeprob = false, is_steadystateprob = false,
         return_operating_point = false, kwargs...
-    )
+    ) where {constructor, floatT, u0Type}
     dvs = unknowns(sys)
     ps = parameters(sys; initial_parameters = true)
     iv = has_iv(sys) ? get_iv(sys) : nothing
@@ -1531,17 +1546,11 @@ function process_SciMLProblem(
 
     check_array_equations_unknowns(eqs, dvs)
 
-    u0Type = pType = typeof(op)
-
-    op = operating_point_preprocess(sys, op)
-    floatT = calculate_float_type(op, u0Type)
-    u0_eltype = something(u0_eltype, floatT)
-
     op = build_operating_point(sys, op; fast_path = true)
 
     check_inputmap_keys(sys, op)
 
-    op = getmetadata(sys, ProblemConstructionHook, identity)(op)
+    op = getmetadata(sys, ProblemConstructionHook, identity)(op)::SymmapT
 
     kwargs = NamedTuple(kwargs)
 
@@ -1556,18 +1565,15 @@ function process_SciMLProblem(
         add_observed_equations!(op, obs, bindings(sys))
     end
 
-    u0_constructor = get_u0_constructor(u0_constructor, u0Type, u0_eltype, symbolic_u0)
-    p_constructor = get_p_constructor(p_constructor, pType, floatT)
-
     if build_initializeprob
         kws = maybe_build_initialization_problem(
-            sys, constructor <: SciMLBase.AbstractSciMLFunction{true},
-            op, t, guesses; initsys_mtkcompile_kwargs,
+            sys, Val{constructor <: SciMLBase.AbstractSciMLFunction{true}}(),
+            op, t, guesses, floatT; initsys_mtkcompile_kwargs,
             warn_initialize_determined, initialization_eqs,
             eval_expression, eval_module, fully_determined,
             warn_cyclic_dependency, check_units = check_initialization_units,
             circular_dependency_max_cycle_length, circular_dependency_max_cycles, use_scc,
-            algebraic_only, allow_incomplete, u0_constructor, p_constructor, floatT,
+            algebraic_only, allow_incomplete, u0_constructor, p_constructor,
             time_dependent_init, missing_guess_value, is_steadystateprob, implicit_dae,
             kwargs...
         )
@@ -1610,13 +1616,13 @@ function process_SciMLProblem(
 
     if is_initializeprob
         u0 = varmap_to_vars(
-            op, dvs; buffer_eltype = u0_eltype, container_type = u0Type,
+            op, dvs; buffer_eltype = floatT, container_type = u0Type,
             allow_symbolic = symbolic_u0, is_initializeprob, substitution_limit,
             missing_values = missing_guess_value
         )
     else
         u0 = varmap_to_vars(
-            op, dvs; buffer_eltype = u0_eltype, container_type = u0Type,
+            op, dvs; buffer_eltype = floatT, container_type = u0Type,
             allow_symbolic = symbolic_u0, is_initializeprob, substitution_limit
         )
     end
@@ -1642,13 +1648,9 @@ function process_SciMLProblem(
     end
 
     if is_split(sys)
-        # `pType` is usually `Dict` when the user passes key-value pairs.
-        if !(pType <: AbstractArray)
-            pType = Array
-        end
         p = MTKParameters(sys, op; floatT = floatT, p_constructor, fast_path = true)
     else
-        p = p_constructor(varmap_to_vars(op, ps; tofloat, container_type = pType))
+        p = p_constructor(varmap_to_vars(op, ps; tofloat, container_type = u0Type))
     end
 
     if implicit_dae
@@ -1676,7 +1678,7 @@ function process_SciMLProblem(
     end
 
     f = constructor(
-        sys; u0 = u0, p = p,
+        sys; u0 = u0, p = p, t = t,
         eval_expression = eval_expression,
         eval_module = eval_module,
         kwargs...
