@@ -633,8 +633,8 @@ function SciMLBase.remake_initialization_data(
     u0_constructor = get_u0_constructor(identity, typeof(newu0), floatT, false)
     p_constructor = get_p_constructor(identity, typeof(newu0), floatT)
     kws = maybe_build_initialization_problem(
-        sys, SciMLBase.isinplace(odefn), op, t0, guesses;
-        time_dependent_init, use_scc, initialization_eqs, floatT, fast_path = true,
+        sys, Val{SciMLBase.isinplace(odefn)}(), op, t0, guesses, floatT;
+        time_dependent_init, use_scc, initialization_eqs, fast_path = true,
         u0_constructor, p_constructor, allow_incomplete = true, check_units = false,
         missing_guess_value = meta.missing_guess_value
     )
