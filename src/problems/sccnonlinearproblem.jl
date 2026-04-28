@@ -10,12 +10,11 @@ const SCCCacheVarsExprsElT = Dict{TypeT, Vector{SymbolicT}}
 
 function CacheWriter(
         sys::AbstractSystem, buffer_types::Vector{TypeT},
-        exprs::SCCCacheVarsExprsElT, solsyms, obseqs::Vector{Equation};
+        exprs::SCCCacheVarsExprsElT, solsyms;
         eval_expression = false, eval_module = @__MODULE__, cse = true, sparse = false
     )
     ps = parameters(sys; initial_parameters = true)
     rps = reorder_parameters(sys, ps)
-    obs_assigns = [eq.lhs ← eq.rhs for eq in obseqs]
     body = map(eachindex(buffer_types), buffer_types) do i, T
         Symbol(:tmp, i) ← SetArray(true, :(out[$i]), get(exprs, T, []))
     end
@@ -31,8 +30,8 @@ function CacheWriter(
         sys, nothing, :out,
         DestructuredArgs(DestructuredArgs.(solsyms), generated_argument_name(1)),
         rps...; p_start = 3, p_end = length(rps) + 2,
-        expression = Val{true}, add_observed = false, cse,
-        extra_assignments = [array_assignments; obs_assigns; body],
+        expression = Val{true}, cse,
+        extra_assignments = [array_assignments; body],
         iip_config = (true, false)
     )
     fn = eval_or_rgf(fn; eval_expression, eval_module)
@@ -553,7 +552,7 @@ function SciMLBase.SCCNonlinearProblem{iip}(
             push!(
                 explicitfuns,
                 CacheWriter(
-                    sys, decomposition.cachetypes, cacheexprs, solsyms, obs[_prevobsidxs];
+                    sys, decomposition.cachetypes, cacheexprs, solsyms;
                     eval_expression, eval_module, cse
                 )
             )
